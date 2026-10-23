@@ -1,11 +1,22 @@
-# Insurance Claim Outcome Predictor
+# Claim Outcome Prediction — End-to-End ML Mini Build
 
-This is a small machine learning project that predicts what will happen to an insurance claim:
-- **Paid** (paid in full)
-- **Partially_Paid** (insurance only paid part of it)
-- **Denied** (insurance refused to pay)
+A lightweight machine learning system that predicts healthcare insurance claim outcomes (`Paid`, `Partially_Paid`, `Denied`) from raw claim features (`payer`, `provider`, `cpt_code`, `diagnosis_code`, `billed_amount`, `patient_age`).
 
-It uses past claim information (like who the insurance company is, what procedure was done, and how much money was billed) to make the prediction, and serves it through a small web API.
+---
+
+## Project Structure
+
+```
+claim-predictor/
+├── generate_data.py   # Creates claims.csv (~70/20/10 mix) with concentrated subgroup signal
+├── features.py        # Custom scikit-learn transformer (smoothed target encoding, zero leakage)
+├── train.py           # Stratified split, leak-free CV, OOF evaluation, threshold tuning, permutation importance
+├── app.py             # Defensive Flask REST API (POST /predict, GET /health, debug=False)
+├── bonus_appeal.py    # Standalone retrieval function for appeal guidance snippets
+├── test_api.py        # Pytest suite validating API schemas, types, and error handling (8 tests)
+├── requirements.txt   # Dependencies pinned to installed environment
+└── README.md          # System documentation, metrics, analysis, and assumptions
+```
 
 ---
 
