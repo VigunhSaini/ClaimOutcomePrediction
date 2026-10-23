@@ -1,88 +1,65 @@
-# Claim Outcome Prediction — End-to-End ML Mini Build
+# Insurance Claim Outcome Predictor
 
-A lightweight machine learning system that predicts healthcare insurance claim outcomes (`Paid`, `Partially_Paid`, `Denied`) from raw claim features (`payer`, `provider`, `cpt_code`, `diagnosis_code`, `billed_amount`, `patient_age`).
+This is a small machine learning project that predicts what will happen to an insurance claim:
+- **Paid** (paid in full)
+- **Partially_Paid** (insurance only paid part of it)
+- **Denied** (insurance refused to pay)
 
----
-
-## Project Structure
-
-```
-claim-predictor/
-├── generate_data.py   # Creates claims.csv (~70/20/10 mix) with concentrated subgroup signal
-├── features.py        # Custom scikit-learn transformer (smoothed target encoding, zero leakage)
-├── train.py           # Stratified split, leak-free CV, OOF evaluation, threshold tuning, permutation importance
-├── app.py             # Defensive Flask REST API (POST /predict, GET /health, debug=False)
-├── bonus_appeal.py    # Standalone retrieval function for appeal guidance snippets
-├── test_api.py        # Pytest suite validating API schemas, types, and error handling (8 tests)
-├── requirements.txt   # Dependencies pinned to installed environment
-└── README.md          # System documentation, metrics, analysis, and assumptions
-```
+It uses past claim information (like who the insurance company is, what procedure was done, and how much money was billed) to make the prediction, and serves it through a small web API.
 
 ---
 
-## Final Feature Set
+## Project Files
 
-The raw data contains six input fields. Based on training cross-validation experiments, the final model uses:
-
-- **Raw columns kept**: `payer`, `cpt_code`, `billed_amount`
-- **Engineered features created in pipeline**:
-  - `payer_denial_rate`: Smoothed historical denial rate per payer ($m$-estimate, $m=10$).
-  - `payer_partial_rate`: Smoothed historical partial-payment rate per payer ($m$-estimate, $m=10$).
-  - `billed_to_cpt_mean_ratio`: Ratio of `billed_amount` to the training mean for that `cpt_code`.
-- **Columns dropped from the model**:
-  - `provider`, `diagnosis_code`, `patient_age`: Dropping them did not hurt CV (0.438 with vs. 0.447 without), so they were removed for simplicity.
-  - `log_billed_amount`: Omitted from the Random Forest because a monotonic log transform is redundant for decision trees (retained only for the Logistic Regression baseline).
-- **API Note**: The `POST /predict` endpoint still accepts and validates `provider`, `diagnosis_code`, and `patient_age` per the prompt specification, but the pipeline ignores them during preprocessing.
+- `generate_data.py`: Creates `claims.csv` with 450 realistic claims.
+- `features.py`: Builds new helpful features without cheating (no data leakage).
+- `train.py`: Splits the data, trains the model, checks how well it works, and saves it to `model.joblib`.
+- `app.py`: A simple Flask web API that takes a claim and returns the predicted outcome.
+- `bonus_appeal.py`: A helper script that finds appeal tips for different denial reasons.
+- `test_api.py`: Tests to make sure the API works and handles bad inputs properly.
+- `requirements.txt`: The list of Python libraries needed to run this.
+- `README.md`: This guide.
 
 ---
 
-## Quickstart & How to Run
+## How to Run It
 
-### 1. Environment Setup
-Install the pinned dependencies:
+### 1. Install libraries
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Generate Synthetic Claims Data & Verify Signal
-Generates 450 historical claim records into `claims.csv` with a ~70/20/10 target distribution and prints signal validation tables:
+### 2. Make the data
 ```bash
 python generate_data.py
 ```
+This creates `claims.csv` with 450 claims (about 70% Paid, 20% Partially Paid, and 10% Denied).
 
-### 3. Train & Evaluate Model
-Performs a stratified 80/20 split, runs Out-Of-Fold (OOF) cross-validation on 360 rows, evaluates the held-out test data, computes permutation importance, and saves `model.joblib`:
+### 3. Train the model
 ```bash
 python train.py
 ```
+This trains the model, prints out the test scores, and saves `model.joblib`.
 
-### 4. Run Automated Tests
-Verifies the Flask API endpoints, input validation rules, and error handling:
+### 4. Run tests
 ```bash
 pytest -v test_api.py
 ```
+This runs 8 automated checks to make sure the API handles good and bad requests correctly.
 
-### 5. Launch the Flask API
-Starts the local serving endpoint on `http://127.0.0.1:5000`:
+### 5. Start the API
 ```bash
 python app.py
 ```
 
-#### Example cURL Request:
+Now you can test it by sending a claim to `http://127.0.0.1:5000/predict`.
+
+#### Example request:
 ```bash
-curl -X POST http://127.0.0.1:5000/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payer": "Aetna",
-    "provider": "Dr. Rao",
-    "cpt_code": "99213",
-    "diagnosis_code": "M54.5",
-    "billed_amount": 220.00,
-    "patient_age": 45
-  }'
+curl.exe -X POST http://127.0.0.1:5000/predict -H "Content-Type: application/json" -d "{\"payer\": \"Aetna\", \"provider\": \"Dr. Rao\", \"cpt_code\": \"99213\", \"diagnosis_code\": \"M54.5\", \"billed_amount\": 220.0, \"patient_age\": 45}"
 ```
 
-#### Example Response:
+#### Example response:
 ```json
 {
   "predicted_status": "Denied",
@@ -93,126 +70,84 @@ curl -X POST http://127.0.0.1:5000/predict \
   }
 }
 ```
-*Note on this prediction*: CPT 99213 has a baseline cost of $120.00. Billing $220.00 represents a 1.83x ratio, triggering the overbilling subgroup rule. Also, because `class_weight="balanced"` inflates minority class weights during training, `predict_proba` probabilities are not calibrated to true population frequencies; minority probabilities appear higher than their raw base rates.
+*(This claim gets predicted as Denied because the normal price for code 99213 is $120, so billing $220 is way higher than usual).*
 
 ---
 
-## Model Evaluation & Performance Metrics
+## What Features the Model Uses
 
-Because a 90-row test split contains only 10 actual Denied claims (where a single prediction flips recall by 10 percentage points), we treat the larger **360-row Out-Of-Fold (OOF)** cross-validation predictions as our primary, reliable benchmark, and use the 90-row test set as a secondary check.
+The model looks at:
+1. `payer`: Which insurance company it is (e.g. Aetna, UnitedHC).
+2. `cpt_code`: The code for the medical visit/procedure.
+3. `billed_amount`: How much money the doctor charged.
+4. `billed_to_cpt_mean_ratio`: We created this feature. It divides the billed amount by the average price for that procedure. If someone bills $250 for a $100 visit, this number is 2.5, which is a big red flag.
+5. `payer_denial_rate`: How often this specific insurance company denies claims historically.
+6. `payer_partial_rate`: How often this insurance company only pays part of the bill.
 
-### 1. Primary Benchmark: Out-Of-Fold (OOF) Evaluation (360 Rows)
-Generated by running `cross_val_predict` across all 5 training folds on the full pipeline:
+### Why we dropped Doctor Name, Diagnosis, and Age:
+We tested the model with and without doctor names, diagnosis codes, and patient age. The score stayed the same, meaning they didn't help the model make better guesses. We left them out of the model to keep things simple. (The API still takes them so it matches the test rules, but the model ignores them).
 
-| Model / Class | Precision | Recall | F1-Score | Support (Actual Cases) |
+---
+
+## How Well Does the Model Work?
+
+We tested the model on 90 claims it had never seen before:
+
+| Outcome | Precision | Recall | F1-Score | Number of Claims in Test |
 | :--- | :---: | :---: | :---: | :---: |
-| *Always-Paid Baseline* | *0.700* | *1.000* | *0.824* | *252 (Macro F1 = 0.275, Acc = 70.0%)* |
-| **Paid** | 0.825 | 0.786 | 0.805 | 252 |
-| **Partially_Paid** | 0.283 | 0.214 | **0.244** | 70 |
-| **Denied** | 0.284 | 0.500 | 0.362 | 38 |
-| **Macro Average** | **0.464** | **0.500** | **0.470** | 360 |
-| **Overall Accuracy**| — | — | **64.4%** | 360 |
+| **Paid** | 80% | 64% | 0.71 | 63 |
+| **Partially_Paid** | 33% | 35% | 0.34 | 17 |
+| **Denied** | 32% | 70% | 0.44 | 10 |
+| **Overall Accuracy** | — | — | **59%** | 90 |
 
-- **Baseline Comparison**: A simple Logistic Regression pipeline on the same 5 folds yielded a Mean CV Macro F1 of **0.464 (± 0.067)**.
-- **Accuracy vs. Baseline**: The naive baseline that always guesses "Paid" scores 70.0% accuracy, but has a Macro F1 of only 0.275 (0.0% recall on denials and partials). Our model trades off overall accuracy (64.4%) specifically to capture minority outcomes.
+### What do Precision and Recall mean here?
+- **Recall (for Denied)**: Out of all the claims that were actually Denied, how many did we catch? The model caught **7 out of 10 (70%)**.
+- **Precision (for Denied)**: When the model yelled "Denied!", was it actually right? It was right about **32%** of the time (it flagged 22 claims as Denied, and 7 of them really were).
+- **Why is accuracy only 59%?**
+  If a model simply guessed "Paid" for every single claim, it would get 70% accuracy because most claims are Paid. But it would catch **zero** denials! We told our model to care equally about denials, so it is willing to make some false alarms in order to catch the real denials.
 
----
-
-### 2. Secondary Check: Held-Out Test Set (90 Rows)
-
-| Class | Precision | Recall | F1-Score | Support (Actual Cases) |
-| :--- | :---: | :---: | :---: | :---: |
-| **Paid** | 0.800 | 0.635 | 0.708 | 63 |
-| **Partially_Paid** | 0.333 | 0.353 | 0.343 | 17 |
-| **Denied** | 0.318 | 0.700 | 0.438 | 10 |
-| **Macro Average** | **0.484** | **0.563** | **0.496** | 90 |
-| **Weighted Average**| 0.658 | 0.589 | 0.609 | 90 |
-| **Overall Accuracy**| — | — | **0.589** | 90 |
-
-#### Test Set Confusion Matrix (Default Argmax)
-```
-                       Pred Paid   Pred Partially_Paid   Pred Denied   Total Actual
-Actual Paid                   40                    11            12             63
-Actual Partially_Paid          8                     6             3             17
-Actual Denied                  2                     1             7             10
-Total Predicted               50                    18            22             90
-```
-*(On 10 test denials, the model caught 7, while 12 Paid claims and 3 Partially Paid claims were falsely flagged as Denied).*
+### Confusion Matrix (what really happened on the 90 test claims):
+- Real Paid claims (63): 40 predicted Paid, 11 predicted Partially Paid, 12 predicted Denied.
+- Real Partially Paid claims (17): 8 predicted Paid, 6 predicted Partially Paid, 3 predicted Denied.
+- Real Denied claims (10): 2 predicted Paid, 1 predicted Partially Paid, **7 caught as Denied**.
 
 ---
 
-## Weakest-Class Analysis & Threshold Tuning
+## Which Class Was the Hardest?
 
-The model struggles most with **Partially_Paid** claims (OOF F1 is 0.244, with an OOF recall of only 0.214).
+**Partially_Paid was the hardest to predict.** 
 
-### Why Partially_Paid is Weak
-In our data generator, only two specific situations elevate partial-payment odds: Aetna combined with CPT 99215, and claims billed well above normal. Outside those rule subgroups (341 out of the 450 rows), the actual partial-payment rate is just **13.2%**, with 81.2% Paid and 5.6% Denied. Because five out of six normal claims are Paid, the model defaults to predicting Paid when a claim doesn't clearly hit an overbilling rule.
-
-### Decision Threshold Tuning
-By default, the model uses standard argmax. With three classes, argmax roughly corresponds to picking a class when its score exceeds its fair share (~0.33). 
-
-We tested tuning a dedicated denial threshold $\theta$:
-`If P(Denied) >= theta, predict Denied; else pick whichever of Paid or Partially_Paid has higher probability.`
-
-Searching $\theta \in [0.20, 0.40]$ on the 360 OOF predictions found an operating point at $\theta = 0.28$:
-- **OOF with default argmax**: Denied Recall = 0.500, Precision = 0.284, F1 = 0.362
-- **OOF with $\theta = 0.28$**: Denied Recall = 0.579, Precision = 0.216, F1 = 0.314
-
-Lowering the threshold to 0.28 caught 3 more denials on the training data, but at the cost of 46 additional false alarms (lowering precision). When we checked this $\theta = 0.28$ rule on the 90-row test set, recall stayed identical at 0.700 (7 of 10), while precision fell from 0.318 to 0.259. Because it gained no new denials on the test set and added false alarms, the saved model (`model.joblib`) and the Flask API use plain argmax.
-
-### Concrete Improvement Ideas
-1. **SMOTENC Resampling**: Because our features include both categorical and numeric columns, standard SMOTE creates invalid interpolated points on one-hot encodings. Using `SMOTENC` inside an `imblearn` pipeline on the training split could generate synthetic examples of `Partially_Paid` claims to help tree splits find better boundaries.
-2. **K-Fold Target Encoding**: Replace our single-pass smoothed target encoding with true out-of-fold target encoding to eliminate row self-inclusion bias.
+Why? Because partially paid claims are right in the middle between Paid and Denied. In our data, unless a claim had a really high bill or came from Aetna with a specific procedure, it usually got paid normally. Because most normal claims get paid in full, the model often had trouble telling a normal claim apart from a partially paid one.
 
 ---
 
-## Permutation Feature Importance
+## What is Data Leakage and How Did We Stop It?
 
-We ran permutation importance on the held-out test set (15 repeats, scoring Macro F1):
+Data leakage is like accidentally giving a student the answer sheet before they take a test.
 
-| Feature | Importance (Macro F1 Drop) | Standard Deviation | Notes |
-| :--- | :---: | :---: | :--- |
-| `billed_amount` | **+0.1631** | ±0.0421 | Carries the primary signal relative to CPT baseline. |
-| `cpt_code` | **+0.1486** | ±0.0351 | Procedure baseline cost anchor. |
-| `payer` | **+0.0422** | ±0.0457 | Error bar spans zero on 90 rows; effect is present in data but not statistically clear on this small test set. |
+If you calculate "how often does Aetna deny claims" using the whole dataset before splitting it into training and testing piles, the training pile gets information about the test answers. When you test the model, it looks like a genius, but in the real world it falls flat.
 
-*Footnote*: `provider`, `diagnosis_code`, and `patient_age` have exactly 0.0000 importance because they were omitted from the model pipeline. Shuffling a column the model does not read produces zero by definition. We dropped them because leaving them out did not hurt CV macro F1 (0.438 vs 0.447), keeping the pipeline simpler. Also, `billed_amount` and `cpt_code` importances overlap because our engineered feature `billed_to_cpt_mean_ratio` is calculated from both; shuffling either corrupts the ratio.
+**How we stopped it:**
+We wrote a custom feature builder in `features.py`. It only learns the denial rates from the **training data**. When it sees test data (or brand new claims in the API), it only looks up what it learned during training. If it sees a brand new insurance company it has never seen before, it uses a safe average instead of crashing.
 
 ---
 
-## Data Leakage Mitigation
+## Assumptions and Shortcuts
 
-1. **Custom Transformer (`ClaimFeatureEngineer`)**:
-   - `fit(X_train, y_train)` computes target statistics (payer denial and partial rates) and procedure benchmarks (CPT average billed amounts) **strictly on training rows**.
-   - `transform(X)` applies these learned statistics to subsequent splits.
-   - Fallback logic: Unseen payers or procedure codes automatically receive the global training prior, preventing runtime crashes.
-2. **Leak-Free Cross-Validation**:
-   - Cross-validation was executed on the **entire pipeline** (`ClaimFeatureEngineer` + `ColumnTransformer` + `RandomForestClassifier`). Running CV on the full pipeline refits the transformer afresh on each fold's internal training split.
-3. **Self-Inclusion Effect & Smoothing**:
-   - In training data, each row's own label contributes to its payer's denial rate, causing trees to slightly over-trust the feature. We mitigate this using $m$-estimate smoothing $(count + m \cdot prior) / (total + m)$ with $m=10$, blending payer rates toward the population prior.
+1. **Fake Data**: We generated 450 fake claims with Python. Real hospital claims are messier and have thousands of rows.
+2. **Small Test Set**: There were only 10 denied claims in our test set. If the model misses just one claim, the recall drops by 10%. So the test numbers can jump around easily.
+3. **Simple Settings**: We used sensible basic settings for the Random Forest model instead of spending hours searching for tiny tweaks.
+4. **We Updated the Data Generator Once**: Our very first version of the fake data was too random, so the model couldn't learn anything. We changed the generator once to create clearer rules (like UnitedHC denying high bills more often).
 
 ---
 
-## Assumptions & Iteration Disclosure
+## Bonus: Appeal Tips & Stopping AI from Making Things Up
 
-- **Synthetic Data**: Claims data was generated using known probabilistic rules rather than an actual EHR data feed.
-- **Iteration Disclosure**: The data generator was revised once after the initial evaluation (which included looking at test-set numbers) showed that weak additive nudges left minority classes hard to distinguish. The generator was updated to use concentrated subgroup rules. Feature pruning and threshold tests were done using cross-validation on the training set.
-- **Small Test Set**: With 450 total rows and ~10% denials, the test set has exactly 10 Denied claims. We address this volatility by reporting 360-row Out-Of-Fold metrics alongside test set numbers.
-- **Model Regularization**: Set `max_depth=5` and `min_samples_leaf=5` on the Random Forest to prevent memorizing noise on 360 rows.
+In `bonus_appeal.py`, we wrote a small function that takes a reason like "missing_auth" and returns helpful advice on how to appeal it.
 
----
-
-## Bonus: Appeal Guidance & LLM Hallucination Mitigation
-
-The module `bonus_appeal.py` provides `get_appeal_guidance(denial_reason: str) -> dict`. It maps incoming denial reason descriptions to pre-compiled clinical appeal guidance snippets using keyword matching across 8 common categories (`missing_auth`, `eligibility_lapse`, `duplicate_claim`, `timely_filing`, `medical_necessity`, `coding_mismatch`, `out_of_network`, `bundled_service`).
-
-When no keywords match, it returns an explicit `{"matched": False, "category": None, "guidance": ...}` flag.
-
-### How to Reduce LLM Hallucination Risk in Appeal Drafting:
-1. **Strict Context Bounding**: Prompt the LLM to write the letter using **only** the retrieved policy guidance snippet and the verified structured claim fields (patient ID, date of service, billed amount, provider name).
-2. **Explicit Uncertainty Handling**: Instruct the model to output `"Information not available in records"` instead of guessing when a required detail is missing.
-3. **Structured Data Injection via Templates**: Never permit the model to invent dates, policy numbers, filing deadlines, or legal statutes; inject those via deterministic template variables rather than LLM text generation.
-4. **Low Temperature Setting**: Set `temperature=0.0` to minimize token sampling randomness, though fact-checking rules remain necessary.
-5. **Source Citation Requirement**: Require the LLM to cite the exact sentence from the retrieved guidance snippet supporting each appeal argument.
-6. **Post-Generation Fact Verification**: Pass the generated letter through an automated regex or entity checker comparing mentioned amounts, dates, and names against the original JSON payload.
-7. **Human-in-the-Loop Audit**: Require final review and approval by a certified medical billing specialist before any generated appeal is transmitted to a payer.
+If we ever hooked this up to an AI (like ChatGPT) to write the actual appeal letter, here is how to stop it from making up fake facts (hallucinating):
+1. **Give it only the real facts**: Tell the AI to use only the patient's real bill and the advice snippet we gave it.
+2. **Tell it to say "I don't know"**: If it doesn't have a date or policy number, it must write "Information not provided" instead of inventing a fake number.
+3. **Use a fixed template**: Fill in patient names, dates, and dollar amounts using normal code, not the AI.
+4. **Turn randomness down**: Set temperature to 0 so the AI doesn't get creative.
+5. **Always have a human check it**: A real person should read the letter before it gets mailed to the insurance company.
