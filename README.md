@@ -1,4 +1,4 @@
-# Claim Outcome Prediction — End-to-End ML Mini Build
+# Claim Outcome Prediction
 
 A lightweight machine learning system that predicts healthcare insurance claim outcomes (`Paid`, `Partially_Paid`, `Denied`) from raw claim features (`payer`, `provider`, `cpt_code`, `diagnosis_code`, `billed_amount`, `patient_age`).
 
